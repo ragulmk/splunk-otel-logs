@@ -1,0 +1,79 @@
+# OpenTelemetry Collector: one pipeline, two backends.
+# Tails JSON logs from disk, normalises them, and ships the same events to
+# Splunk (via HEC) and Grafana Loki (via native OTLP). Swap or add backends
+# without touching the applications.
+
+receivers:
+  filelog:
+    include: [/logs/app.log]
+    start_at: beginning   # safe: file_storage prevents re-reading after restarts
+    storage: file_storage          # remember read position across restarts
+    operators:
+      - type: json_parser
+        parse_to: attributes.parsed
+        timestamp:
+          parse_from: attributes.parsed.timestamp
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.000Z07:00"
+        severity:
+          parse_from: attributes.parsed.level
+      - type: copy
+        from: attributes.parsed.service
+        to: resource["service.name"]
+      # Keep the original JSON line as the body; drop the temporary parsed copy
+      - type: remove
+        field: attributes.parsed
+
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    create_directory: true
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:DEPLOY_ENV}
+        action: upsert
+  batch:
+    send_batch_size: 512
+    timeout: 2s
+
+exporters:
+  splunk_hec:
+    token: ${env:SPLUNK_HEC_TOKEN}
+    endpoint: https://splunk:8088/services/collector
+    source: otel-collector
+    sourcetype: app:json
+    index: app_logs
+    tls:
+      insecure_skip_verify: true   # demo uses Splunk's self-signed cert
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 10m
+
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+
+service:
+  extensions: [file_storage, health_check]
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors: [memory_limiter, resource, batch]
+      exporters: [splunk_hec, otlphttp/loki]
+  telemetry:
+    metrics:
+      level: normal
