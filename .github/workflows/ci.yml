@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate Splunk app, YAML and dashboards
+        run: make validate
+      - name: Log generator unit tests
+        run: make test-loggen
+      - name: Validate OpenTelemetry Collector config
+        run: make test-otel
+      - name: ShellCheck
+        run: shellcheck scripts/*.sh
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

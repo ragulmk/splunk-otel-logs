@@ -1,0 +1,169 @@
+<form version="1.1" theme="dark">
+  <label>Service Health</label>
+  <description>Golden signals from application logs: traffic, errors, latency. Click an error row to follow its trace across services.</description>
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="time">
+      <label>Time range</label>
+      <default>
+        <earliest>-60m@m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="service">
+      <label>Service</label>
+      <choice value="*">All</choice>
+      <default>*</default>
+      <fieldForLabel>service</fieldForLabel>
+      <fieldForValue>service</fieldForValue>
+      <search>
+        <query>`app_logs` | stats count BY service | sort service</query>
+        <earliest>-60m</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+    <input type="text" token="trace">
+      <label>Trace ID</label>
+      <default></default>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <title>Requests</title>
+      <single>
+        <search>
+          <query>`gateway` | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="numberPrecision">0</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Error rate (5xx)</title>
+      <single>
+        <search>
+          <query>`gateway` | stats count AS total, sum(is_error) AS errors | eval error_pct = round(errors / total * 100, 2) | fields error_pct</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="unit">%</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[1,5]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>p95 latency</title>
+      <single>
+        <search>
+          <query>`gateway` | stats perc95(duration_ms) AS p95 | eval p95 = round(p95)</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="unit">ms</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[300,1000]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Payment failures</title>
+      <single>
+        <search>
+          <query>`app_logs` service="payment-service" status&gt;=500 | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Traffic by status class</title>
+      <chart>
+        <search>
+          <query>`gateway` | timechart span=1m count BY status_class</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.fieldColors">{"2xx":"0x53a051","3xx":"0x006eaa","4xx":"0xf8be34","5xx":"0xdc4e41"}</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Latency percentiles (ms)</title>
+      <chart>
+        <search>
+          <query>`app_logs` service="$service$" service!="web-gateway" duration_ms=* | timechart span=1m perc50(duration_ms) AS p50, perc95(duration_ms) AS p95, perc99(duration_ms) AS p99</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Errors and warnings by service</title>
+      <chart>
+        <search>
+          <query>`app_logs` service="$service$" level IN ("ERROR","WARN") | timechart span=1m count BY service</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Availability by service (non-5xx %)</title>
+      <table>
+        <search>
+          <query>`app_logs` service!="web-gateway" status=* | stats count AS requests, sum(is_error) AS errors BY service | eval availability_pct = round((requests - errors) / requests * 100, 3) | sort availability_pct</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <format type="color" field="availability_pct">
+          <colorPalette type="list">[#DC4E41,#F8BE34,#53A051]</colorPalette>
+          <scale type="threshold">99,99.9</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Top errors (click a row to trace it)</title>
+      <table>
+        <search>
+          <query>`app_logs` service="$service$" level="ERROR" | eval error = coalesce(error, msg) | stats count, latest(_time) AS last_seen, latest(trace_id) AS trace_id BY service, error | sort - count | eval last_seen = strftime(last_seen, "%Y-%m-%d %H:%M:%S")</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <drilldown>
+          <set token="form.trace">$row.trace_id$</set>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <row depends="$trace$">
+    <panel>
+      <title>Trace $trace$: every log line for this request, across services</title>
+      <table>
+        <search>
+          <query>`app_logs` trace_id="$trace$" | table _time, service, level, msg, method, path, status, duration_ms, error | sort _time</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+</form>

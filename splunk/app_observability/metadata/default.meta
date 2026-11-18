@@ -1,0 +1,4 @@
+# Share everything in this app globally so it also works from Search & Reporting
+[]
+access = read : [ * ], write : [ admin ]
+export = system

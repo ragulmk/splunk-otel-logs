@@ -1,0 +1,9 @@
+<nav search_view="search" color="#5C4EE5">
+  <view name="service_health" default="true" />
+  <view name="security_auth" />
+  <view name="search" />
+  <collection label="Alerts &amp; Reports">
+    <a href="/app/app_observability/alerts">Alerts</a>
+    <a href="/app/app_observability/reports">Reports</a>
+  </collection>
+</nav>

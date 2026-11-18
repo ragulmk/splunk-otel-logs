@@ -1,0 +1,93 @@
+<form version="1.1" theme="dark">
+  <label>Security - Authentication</label>
+  <description>Login activity and brute-force detection from auth-service logs.</description>
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="time">
+      <label>Time range</label>
+      <default>
+        <earliest>-4h@m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <title>Login attempts</title>
+      <single>
+        <search>
+          <query>`app_logs` service="auth-service" event="login" | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+      </single>
+    </panel>
+    <panel>
+      <title>Failure rate</title>
+      <single>
+        <search>
+          <query>`app_logs` service="auth-service" event="login" | stats count AS total, count(eval(outcome="failure")) AS failed | eval failure_pct = round(failed / total * 100, 1) | fields failure_pct</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="unit">%</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[10,25]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Suspicious IPs (&gt;20 failures in 5 min)</title>
+      <single>
+        <search>
+          <query>`app_logs` service="auth-service" outcome="failure" | bin _time span=5m | stats count BY _time, client_ip | where count &gt; 20 | stats dc(client_ip)</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Logins over time</title>
+      <chart>
+        <search>
+          <query>`app_logs` service="auth-service" event="login" | timechart span=5m count BY outcome</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.fieldColors">{"success":"0x53a051","failure":"0xdc4e41"}</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Top source IPs by failed logins</title>
+      <table>
+        <search>
+          <query>`app_logs` service="auth-service" outcome="failure" | stats count AS failed_logins, dc(user) AS distinct_users, values(user) AS usernames, earliest(_time) AS first_seen, latest(_time) AS last_seen BY client_ip | sort - failed_logins | head 10 | eval first_seen = strftime(first_seen, "%H:%M:%S"), last_seen = strftime(last_seen, "%H:%M:%S")</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+      </table>
+    </panel>
+    <panel>
+      <title>Most targeted usernames</title>
+      <chart>
+        <search>
+          <query>`app_logs` service="auth-service" outcome="failure" | top limit=10 user</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+      </chart>
+    </panel>
+  </row>
+</form>
