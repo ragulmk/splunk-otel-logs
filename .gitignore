@@ -1,0 +1,7 @@
+.env
+control/*
+!control/.gitkeep
+__pycache__/
+.DS_Store
+.idea/
+.vscode/

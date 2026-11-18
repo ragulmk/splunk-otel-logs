@@ -1,0 +1,90 @@
+# Log analytics pipeline:
+#   loggen -> (file) -> OpenTelemetry Collector -> Splunk + Loki/Grafana
+# Usage: make up   (Splunk takes 2-3 minutes to start the first time)
+name: splunk-otel-logs
+
+services:
+  loggen:
+    image: python:3.13-slim
+    container_name: loggen
+    restart: unless-stopped
+    command: python /app/loggen.py
+    environment:
+      RPS: ${LOG_RPS:-5}
+      LOG_FILE: /logs/app.log
+      CONTROL_DIR: /control
+    volumes:
+      - ./loggen:/app:ro
+      - ./control:/control
+      - app_logs:/logs
+
+  splunk:
+    image: splunk/splunk:10.0.0
+    platform: linux/amd64
+    container_name: splunk
+    restart: unless-stopped
+    environment:
+      SPLUNK_START_ARGS: --accept-license
+      SPLUNK_GENERAL_TERMS: --accept-sgt-current-at-splunk-com
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD:?Run make setup first}
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:?Run make setup first}
+    volumes:
+      - ./splunk/app_observability:/opt/splunk/etc/apps/app_observability
+      - splunk_var:/opt/splunk/var
+    ports:
+      - "8000:8000"             # Splunk Web
+      - "127.0.0.1:8088:8088"   # HEC
+      - "127.0.0.1:8089:8089"   # management API
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.128.0
+    container_name: otel-collector
+    restart: unless-stopped
+    user: "0"   # needs to read the shared log volume and write its storage dir
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:?Run make setup first}
+      DEPLOY_ENV: ${DEPLOY_ENV:-demo}
+    volumes:
+      - ./otel/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - app_logs:/logs:ro
+      - otel_storage:/var/lib/otelcol/storage
+    ports:
+      - "127.0.0.1:13133:13133"  # health check
+    depends_on:
+      splunk:
+        condition: service_healthy
+      loki:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:12.0.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on: [loki]
+
+volumes:
+  app_logs:
+  splunk_var:
+  loki_data:
+  otel_storage:
+  grafana_data:
